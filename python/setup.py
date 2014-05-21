@@ -14,6 +14,7 @@ setup(
     install_requires=[
         "httplib2 >= 0.7.4",
         "pyactiveresource >= 2.0.0",
+        "urllib2_file"
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
