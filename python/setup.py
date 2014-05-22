@@ -13,7 +13,6 @@ setup(
     license='Apache License, Version 2.0',
     install_requires=[
         "httplib2 >= 0.7.4",
-        "pyactiveresource >= 2.0.0",
         "urllib2_file"
     ],
     classifiers=[
