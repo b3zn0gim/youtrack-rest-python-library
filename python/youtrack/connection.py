@@ -1,19 +1,24 @@
+# -*- coding: utf-8 -*-
+import sys
+
 import calendar
 from datetime import datetime
-import httplib2
-from xml.dom import minidom
-import sys
-import youtrack
-from xml.dom import Node
+
 import urllib2
 import urllib
+
+from xml.dom import Node, minidom
 from xml.sax.saxutils import escape, quoteattr
 import json
-import urllib2_file
 import tempfile
+
+import httplib2
+import youtrack
+
 
 def urlquote(s):
     return urllib.quote(utf8encode(s), safe="")
+
 
 def utf8encode(source):
     if isinstance(source, unicode):
@@ -49,7 +54,6 @@ class Connection(object):
 
         #print responsetes
 
-
     def _req(self, method, url, body=None, ignoreStatus=None):
         headers = self.headers
         if method == 'PUT' or method == 'POST':
@@ -69,7 +73,7 @@ class Connection(object):
         response, content = self._req(method, url, body, ignoreStatus)
         if response.has_key('content-type'):
             if (response["content-type"].find('application/xml') != -1 or response["content-type"].find(
-                'text/xml') != -1) and content is not None and content != '':
+                    'text/xml') != -1) and content is not None and content != '':
                 try:
                     return minidom.parseString(content)
                 except Exception:
@@ -119,6 +123,16 @@ class Connection(object):
 
         return self._reqXml('PUT', '/issue?' + urllib.urlencode(params), '')
 
+    def getIssueCountBulk(self, queries):
+        xml = '<queries>\n'
+        for q in queries:
+            # ignore typeOutward and typeInward returned by getLinks()
+            xml += '  <query>' + q + '</query>\n'
+        xml += '</queries>'
+
+        #TODO: convert response xml into python objects
+        res = self._reqXml('PUT', '/issue/counts', xml, 400)
+
     def get_changes_for_issue(self, issue):
         return [youtrack.IssueChange(change, self) for change in
                 self._get("/issue/%s/changes" % issue).getElementsByTagName('change')]
@@ -144,10 +158,10 @@ class Connection(object):
             if 'content-length' in content.headers.dict:
                 contentLength = int(content.headers.dict['content-length'])
             return self.importAttachment(issueId, a.name, content, a.authorLogin,
-                contentLength=contentLength,
-                contentType=content.info().type,
-                created=a.created if hasattr(a, 'created') else None,
-                group=a.group if hasattr(a, 'group') else '')
+                                         contentLength=contentLength,
+                                         contentType=content.info().type,
+                                         created=a.created if hasattr(a, 'created') else None,
+                                         group=a.group if hasattr(a, 'group') else '')
         except urllib2.HTTPError, e:
             print "Can't create attachment"
             try:
@@ -178,7 +192,7 @@ class Connection(object):
             except Exception:
                 pass
             raise e
-            
+
 
     def _process_attachmnets(self, authorLogin, content, contentLength, contentType, created, group, issueId, name,
                              url_prefix='/issue/'):
@@ -198,8 +212,8 @@ class Connection(object):
         headers = self.headers.copy()
         #headers['Content-Type'] = contentType
         # name without extension to workaround: http://youtrack.jetbrains.net/issue/JT-6110
-        params = {#'name': os.path.splitext(name)[0],
-                  'authorLogin': authorLogin,
+        params = {  #'name': os.path.splitext(name)[0],
+                    'authorLogin': authorLogin,
         }
         if group is not None:
             params["group"] = group
@@ -213,7 +227,7 @@ class Connection(object):
 
         url = self.baseUrl + url_prefix + issueId + "/attachment?" + urllib.urlencode(params)
         r = urllib2.Request(url,
-            headers=headers, data=post_data)
+                            headers=headers, data=post_data)
         #r.set_proxy('localhost:8888', 'http')
         try:
             res = urllib2.urlopen(r)
@@ -226,12 +240,12 @@ class Connection(object):
     def createAttachment(self, issueId, name, content, authorLogin='', contentType=None, contentLength=None,
                          created=None, group=''):
         return self._process_attachmnets(authorLogin, content, contentLength, contentType, created, group, issueId,
-            name)
+                                         name)
 
     def importAttachment(self, issue_id, name, content, authorLogin, contentType, contentLength, created=None,
                          group=''):
         return self._process_attachmnets(authorLogin, content, contentLength, contentType, created, group, issue_id,
-            name, '/import/')
+                                         name, '/import/')
 
 
     def getLinks(self, id, outwardOnly=False):
@@ -286,7 +300,7 @@ class Connection(object):
     def importIssuesXml(self, projectId, assigneeGroup, xml):
         return self._reqXml('PUT', '/import/' + urlquote(projectId) + '/issues?' +
                                    urllib.urlencode({'assigneeGroup': assigneeGroup}),
-            xml, 400).toxml()
+                            xml, 400).toxml()
 
     def importLinks(self, links):
         """ Import links, returns import result (http://confluence.jetbrains.net/display/YTD2/Import+Links)
@@ -325,7 +339,6 @@ class Connection(object):
 
         xml = '<issues>\n'
         issue_records = dict([])
-
 
         for issue in issues:
             record = ""
@@ -422,10 +435,37 @@ class Connection(object):
                 print ""
         return response
 
-    def getProjects(self):
+    def getProjects(self, verbose=False):
         projects = {}
-        for e in self._get("/project/all").documentElement.childNodes:
-            projects[e.getAttribute('shortName')] = e.getAttribute('name')
+        req_str = "/project/all"
+
+        if verbose:
+            req_str += "?verbose=true"
+
+        response = self._get(req_str).documentElement.childNodes
+        print response
+
+        if verbose:
+            for obj in response:
+                subsystems = obj.getElementsByTagName('subsystems')[0].childNodes
+                shortName = obj.getAttribute('shortName')
+
+                projects[shortName] = {
+                    'versions': obj.getAttribute('versions'),
+                    'name': obj.getAttribute('name'),
+                    'shortName': shortName,
+                    'description': obj.getAttribute('description'),
+                    'isImporting': obj.getAttribute('isImporting'),
+                    'subsystems': [],
+                }
+
+                for sub in subsystems:
+                    projects[shortName]['subsystems'].append(sub.getAttribute('value'))
+
+        else:
+            for e in response:
+                projects[e.getAttribute('shortName')] = e.getAttribute('name')
+
         return projects
 
     def getProject(self, projectId):
@@ -465,8 +505,8 @@ class Connection(object):
         if isinstance(group_name, unicode):
             group_name = group_name.encode('utf-8')
         response, content = self._req('POST',
-            '/admin/user/%s/group/%s' % (urlquote(user_name), urlquote(group_name)),
-            body='')
+                                      '/admin/user/%s/group/%s' % (urlquote(user_name), urlquote(group_name)),
+                                      body='')
         return response
 
     def createGroup(self, group):
@@ -478,7 +518,7 @@ class Connection(object):
         url_group_name = urlquote(utf8encode(group.name))
         url_role_name = urlquote(utf8encode(userRole.name))
         response, content = self._req('PUT', '/admin/group/%s/role/%s' % (url_group_name, url_role_name),
-            body=userRole.toXml())
+                                      body=userRole.toXml())
         return content
 
     def getRole(self, name):
@@ -498,7 +538,7 @@ class Connection(object):
         url_role_name = urlquote(utf8encode(role.name))
         url_role_dscr = ''
         if hasattr(role, 'description'):
-                url_role_dscr = urlquote(utf8encode(role.description))
+            url_role_dscr = urlquote(utf8encode(role.description))
         content = self._put('/admin/role/%s?description=%s' % (url_role_name, url_role_dscr))
         return content
 
@@ -507,7 +547,7 @@ class Connection(object):
         url_new_name = urlquote(utf8encode(new_name))
         url_new_dscr = urlquote(utf8encode(new_description))
         content = self._req('POST',
-            '/admin/role/%s?newName=%s&description=%s' % (url_role_name, url_new_name, url_new_dscr))
+                            '/admin/role/%s?newName=%s&description=%s' % (url_role_name, url_new_name, url_new_dscr))
         return content
 
     def addPermissionToRole(self, role, permission):
@@ -616,7 +656,7 @@ class Connection(object):
     # TODO this function is deprecated
     def createSubsystem(self, projectId, s):
         return self.createSubsystemDetailed(projectId, s.name, s.isDefault,
-            s.defaultAssignee if s.defaultAssignee != '<no user>' else '')
+                                            s.defaultAssignee if s.defaultAssignee != '<no user>' else '')
 
     # TODO this function is deprecated
     def createSubsystemDetailed(self, projectId, name, isDefault, defaultAssigneeLogin):
@@ -629,7 +669,7 @@ class Connection(object):
     # TODO this function is deprecated
     def deleteSubsystem(self, projectId, name):
         return self._reqXml('DELETE', '/admin/project/' + projectId + '/subsystem/' + urlquote(name.encode('utf-8'))
-            , '')
+                            , '')
 
     # TODO this function is deprecated
     def createVersions(self, projectId, versions):
@@ -642,7 +682,7 @@ class Connection(object):
     # TODO this function is deprecated
     def createVersion(self, projectId, v):
         return self.createVersionDetailed(projectId, v.name, v.isReleased, v.isArchived, releaseDate=v.releaseDate,
-            description=v.description)
+                                          description=v.description)
 
     # TODO this function is deprecated
     def createVersionDetailed(self, projectId, name, isReleased, isArchived, releaseDate=None, description=''):
@@ -707,7 +747,7 @@ class Connection(object):
         if hasattr(cf, "autoAttached"):
             auto_attached = cf.autoAttached
         return self.createCustomFieldDetailed(cf.name, cf.type, cf.isPrivate, cf.visibleByDefault, auto_attached,
-            params)
+                                              params)
 
     def createCustomFieldDetailed(self, customFieldName, typeName, isPrivate, defaultVisibility,
                                   auto_attached=False, additional_params=dict([])):
@@ -782,7 +822,7 @@ class Connection(object):
     def getWorkItems(self, issue_id):
         try:
             response, content = self._req('GET',
-                '/issue/%s/timetracking/workitem' % urlquote(issue_id))
+                                          '/issue/%s/timetracking/workitem' % urlquote(issue_id))
             xml = minidom.parseString(content)
             return [youtrack.WorkItem(e, self) for e in xml.documentElement.childNodes if
                     e.nodeType == Node.ELEMENT_NODE]
@@ -792,7 +832,7 @@ class Connection(object):
 
 
     def createWorkItem(self, issue_id, work_item):
-        xml =  '<workItem>'
+        xml = '<workItem>'
         xml += '<date>%s</date>' % work_item.date
         xml += '<duration>%s</duration>' % work_item.duration
         if hasattr(work_item, 'description') and work_item.description is not None:
@@ -801,12 +841,12 @@ class Connection(object):
         if isinstance(xml, unicode):
             xml = xml.encode('utf-8')
         self._reqXml('POST',
-            '/issue/%s/timetracking/workitem' % urlquote(issue_id), xml)
+                     '/issue/%s/timetracking/workitem' % urlquote(issue_id), xml)
 
     def importWorkItems(self, issue_id, work_items):
         xml = ''
         for work_item in work_items:
-            xml +=  '<workItem>'
+            xml += '<workItem>'
             xml += '<date>%s</date>' % work_item.date
             xml += '<duration>%s</duration>' % work_item.duration
             if hasattr(work_item, 'description') and work_item.description is not None:
@@ -818,7 +858,7 @@ class Connection(object):
         if xml:
             xml = '<workItems>' + xml + '</workItems>'
             self._reqXml('PUT',
-                '/import/issue/%s/workitems' % urlquote(issue_id), xml)
+                         '/import/issue/%s/workitems' % urlquote(issue_id), xml)
 
     def getSearchIntelliSense(self, query,
                               context=None, caret=None, options_limit=None):
@@ -871,7 +911,7 @@ class Connection(object):
         return self._reqXml('PUT', '/admin/timetracking', xml)
 
     def setProjectTimeTrackingSettings(self,
-        projectId, estimateField=None, timeSpentField=None, enabled=None):
+                                       projectId, estimateField=None, timeSpentField=None, enabled=None):
         if enabled is not None:
             xml = '<settings enabled="%s">' % str(enabled == True).lower()
         else:
@@ -883,7 +923,7 @@ class Connection(object):
         xml += '</settings>'
         return self._reqXml(
             'PUT', '/admin/project/' + projectId + '/timetracking', xml)
-      
+
     def getAllBundles(self, field_type):
         field_type = self.get_field_type(field_type)
         if field_type == "enum":
@@ -916,7 +956,7 @@ class Connection(object):
 
     def createBundle(self, bundle):
         return self._reqXml('PUT', '/admin/customfield/' + self.bundle_paths[bundle.get_field_type()],
-            body=bundle.toXml(), ignoreStatus=400)
+                            body=bundle.toXml(), ignoreStatus=400)
 
     def deleteBundle(self, bundle):
         response, content = self._req("DELETE", "/admin/customfield/%s/%s" % (
@@ -987,7 +1027,6 @@ class Connection(object):
 
     def addValuesToEnumBundle(self, name, values):
         return ", ".join(self.addValueToEnumBundle(name, value) for value in values)
-
 
     bundle_paths = {
         "enum": "bundle",
