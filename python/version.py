@@ -1,3 +1,3 @@
 __author__ = 'kkrzysztofik'
 
-version = "1.0.1"
+version = "1.0.2"
