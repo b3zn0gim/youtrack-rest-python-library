@@ -131,7 +131,23 @@ class Connection(object):
         xml += '</queries>'
 
         #TODO: convert response xml into python objects
-        res = self._reqXml('PUT', '/issue/counts', xml, 400)
+        run = False
+        while 1:
+            res = self._reqXml('POST', '/issue/counts', xml, 400)
+            nodes = res.childNodes[0].childNodes
+            for node in nodes:
+                if node.firstChild.nodeValue < 0:
+                    run = True
+            if not run:
+                break
+
+        ret = []
+        nodes = res.childNodes[0].childNodes
+
+        for node in nodes:
+            ret.append(node.firstChild.nodeValue)
+
+        return ret
 
     def get_changes_for_issue(self, issue):
         return [youtrack.IssueChange(change, self) for change in
