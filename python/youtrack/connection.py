@@ -711,9 +711,9 @@ class Connection(object):
             '/admin/project/' + urlquote(projectId) + '/version/' + urlquote(name.encode('utf-8')) + "?" +
             urllib.urlencode(params))
 
-    def getIssues(self, projectId, filter, after, max):
+    def getIssues(self, filter, after=0, max=10):
         #response, content = self._req('GET', '/project/issues/' + urlquote(projectId) + "?" +
-        response, content = self._req('GET', '/issue/byproject/' + urlquote(projectId) + "?" +
+        response, content = self._req('GET', '/issue/?' +
                                              urllib.urlencode({'after': str(after),
                                                                'max': str(max),
                                                                'filter': filter}))
