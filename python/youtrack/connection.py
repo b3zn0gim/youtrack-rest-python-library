@@ -136,7 +136,7 @@ class Connection(object):
             res = self._reqXml('POST', '/issue/counts', xml, 400)
             nodes = res.childNodes[0].childNodes
             for node in nodes:
-                if node.firstChild.nodeValue < 0:
+                if int(node.firstChild.nodeValue) < 0:
                     run = True
             if not run:
                 break
@@ -145,7 +145,7 @@ class Connection(object):
         nodes = res.childNodes[0].childNodes
 
         for node in nodes:
-            ret.append(node.firstChild.nodeValue)
+            ret.append(int(node.firstChild.nodeValue))
 
         return ret
 
