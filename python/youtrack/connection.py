@@ -134,6 +134,8 @@ class Connection(object):
         run = False
         while 1:
             res = self._reqXml('POST', '/issue/counts', xml, 400)
+            run = False
+
             nodes = res.childNodes[0].childNodes
             for node in nodes:
                 if int(node.firstChild.nodeValue) < 0:
