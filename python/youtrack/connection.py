@@ -99,11 +99,18 @@ class Connection(object):
         return youtrack.Issue(self._get("/issue/" + id), self)
 
     def createIssue(self, project, assignee, summary, description, priority=None, type=None, subsystem=None, state=None,
-                    affectsVersion=None,
-                    fixedVersion=None, fixedInBuild=None):
+                    affectsVersion=None, fixedVersion=None, fixedInBuild=None):
+        if isinstance(project, unicode):
+            pass
+        if isinstance(summary, unicode):
+            pass
+        if isinstance(description, unicode):
+            pass
+
         params = {'project': project,
                   'summary': summary,
                   'description': description}
+
         if assignee is not None:
             params['assignee'] = assignee
         if priority is not None:
@@ -121,7 +128,12 @@ class Connection(object):
         if fixedInBuild is not None:
             params['fixedInBuild'] = fixedInBuild
 
-        return self._reqXml('PUT', '/issue?' + urllib.urlencode(params), '')
+        encoded_params = {}
+
+        for k, v in params.iteritems():
+            encoded_params[k] = unicode(v).encode('utf-8')
+
+        return self._reqXml('PUT', '/issue?' + urllib.urlencode(encoded_params), '')
 
     def getIssueCountBulk(self, queries):
         xml = '<queries>\n'
