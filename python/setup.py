@@ -6,9 +6,10 @@ from version import version
 setup(
     name='pyyoutrack',
     version=version,
-    author='JetBrains s.r.o',
     packages=['youtrack'],
-    url='http://www.jetbrains.com/youtrack/',
+    maintainer='Krzysztof Krzysztofik',
+    maintainer_email='kkrzysztofik@teonite.com',
+    url='https://github.com/JetBrains/youtrack-rest-python-library',
     description='Python library that wraps YouTrack REST API.',
     license='Apache License, Version 2.0',
     install_requires=[
