@@ -4,7 +4,7 @@ from setuptools import setup
 from version import version
 
 setup(
-    name='YouTrack-Python',
+    name='pyyoutrack',
     version=version,
     author='JetBrains s.r.o',
     packages=['youtrack'],
