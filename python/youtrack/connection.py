@@ -2,6 +2,7 @@
 import sys
 
 import calendar
+import time
 from datetime import datetime
 
 import urllib2
@@ -11,6 +12,7 @@ from xml.dom import Node, minidom
 from xml.sax.saxutils import escape, quoteattr
 import json
 import tempfile
+import functools
 
 import httplib2
 import youtrack
@@ -25,6 +27,18 @@ def utf8encode(source):
         source = source.encode('utf-8')
     return source
 
+def relogin_on_401(f):
+    @functools.wraps(f)
+    def wrapped(self, *args, **kwargs):
+        try:
+            return f(self, *args, **kwargs)
+        except youtrack.YouTrackException, e:
+            if e.response.status != 401:
+                raise e
+            self._login(*self._credentials)
+            return f(self, *args, **kwargs)
+    return wrapped
+
 
 class Connection(object):
     def __init__(self, url, login=None, password=None, proxy_info=None, api_key=None):
@@ -38,7 +52,8 @@ class Connection(object):
         self.url = url
         self.baseUrl = url + "/rest"
         if api_key is None:
-            self._login(login, password)
+            self._credentials = (login, password)
+            self._login(*self._credentials)
         else:
             self.headers = {'X-YouTrack-ApiKey': api_key}
 
@@ -52,20 +67,20 @@ class Connection(object):
         self.headers = {'Cookie': response['set-cookie'],
                         'Cache-Control': 'no-cache'}
 
-        #print responsetes
-
-    def _req(self, method, url, body=None, ignoreStatus=None):
+    @relogin_on_401
+    def _req(self, method, url, body=None, ignoreStatus=None, content_type=None):
         headers = self.headers
         if method == 'PUT' or method == 'POST':
             headers = headers.copy()
-            headers['Content-Type'] = 'application/xml; charset=UTF-8'
+            if content_type is None:
+                content_type = 'application/xml; charset=UTF-8'
+            headers['Content-Type'] = content_type
             headers['Content-Length'] = str(len(body)) if body else '0'
 
         response, content = self.http.request((self.baseUrl + url).encode('utf-8'), method, headers=headers, body=body)
+        content = content.translate(None, '\0')
         if response.status != 200 and response.status != 201 and (ignoreStatus != response.status):
             raise youtrack.YouTrackException(url, response, content)
-
-        #print response
 
         return response, content
 
@@ -99,14 +114,8 @@ class Connection(object):
         return youtrack.Issue(self._get("/issue/" + id), self)
 
     def createIssue(self, project, assignee, summary, description, priority=None, type=None, subsystem=None, state=None,
-                    affectsVersion=None, fixedVersion=None, fixedInBuild=None):
-        if isinstance(project, unicode):
-            pass
-        if isinstance(summary, unicode):
-            pass
-        if isinstance(description, unicode):
-            pass
-
+                    affectsVersion=None,
+                    fixedVersion=None, fixedInBuild=None):
         params = {'project': project,
                   'summary': summary,
                   'description': description}
@@ -127,8 +136,11 @@ class Connection(object):
             params['fixVersion'] = fixedVersion
         if fixedInBuild is not None:
             params['fixedInBuild'] = fixedInBuild
+        if permittedGroup is not None:
+            params['permittedGroup'] = permittedGroup
 
         encoded_params = {}
+        return self._req('PUT', '/issue', urllib.urlencode(params), content_type='application/x-www-form-urlencoded')
 
         for k, v in params.iteritems():
             encoded_params[k] = unicode(v).encode('utf-8')
@@ -163,6 +175,9 @@ class Connection(object):
 
         return ret
 
+    def deleteIssue(self, issue_id):
+        return self._req('DELETE', '/issue/%s' % issue_id)
+
     def get_changes_for_issue(self, issue):
         return [youtrack.IssueChange(change, self) for change in
                 self._get("/issue/%s/changes" % issue).getElementsByTagName('change')]
@@ -180,6 +195,9 @@ class Connection(object):
     def getAttachmentContent(self, url):
         f = urllib2.urlopen(urllib2.Request(self.url + url, headers=self.headers))
         return f
+
+    def deleteAttachment(self, issue_id, attachment_id):
+        return self._req('DELETE', '/issue/%s/attachment/%s' % (issue_id, attachment_id))
 
     def createAttachmentFromAttachment(self, issueId, a):
         try:
@@ -361,7 +379,8 @@ class Connection(object):
 
         bad_fields = ['id', 'projectShortName', 'votes', 'commentsCount',
                       'historyUpdated', 'updatedByFullName', 'updaterFullName',
-                      'reporterFullName', 'links', 'attachments', 'jiraId']
+                      'reporterFullName', 'links', 'attachments', 'jiraId',
+                      'entityId']
 
         tt_settings = self.getProjectTimeTrackingSettings(projectId)
         if tt_settings and tt_settings.Enabled and tt_settings.TimeSpentField:
@@ -734,6 +753,37 @@ class Connection(object):
         xml = minidom.parseString(content)
         return [youtrack.Issue(e, self) for e in xml.documentElement.childNodes if e.nodeType == Node.ELEMENT_NODE]
 
+    def getNumberOfIssues(self, filter = '', waitForServer=True):
+        while True:
+          urlFilterList = [('filter',filter)]
+          finalUrl = '/issue/count?' + urllib.urlencode(urlFilterList)
+          response, content = self._req('GET', finalUrl)
+          result = eval(content.replace('callback',''))
+          numberOfIssues = result['value']
+          if (not waitForServer):
+            return numberOfIssues
+          if (numberOfIssues!=-1):
+            break
+
+        time.sleep(5)
+        return self.getNumberOfIssues(filter,False)
+
+
+    def getAllSprints(self,agileID):
+        response, content = self._req('GET', '/agile/' + agileID + "/sprints?")
+        xml = minidom.parseString(content)
+        return [(e.getAttribute('name'),e.getAttribute('start'),e.getAttribute('finish')) for e in xml.documentElement.childNodes if e.nodeType == Node.ELEMENT_NODE]
+
+    def getAllIssues(self, filter = '', after = 0, max = 999999, withFields = ()):
+        urlJobby = [('with',field) for field in withFields] + \
+                    [('after',str(after)),
+                    ('max',str(max)),
+                    ('filter',filter)]
+        response, content = self._req('GET', '/issue' + "?" +
+                                             urllib.urlencode(urlJobby))
+        xml = minidom.parseString(content)
+        return [youtrack.Issue(e, self) for e in xml.documentElement.childNodes if e.nodeType == Node.ELEMENT_NODE]
+
     def exportIssueLinks(self):
         response, content = self._req('GET', '/export/links')
         xml = minidom.parseString(content)
@@ -752,6 +802,9 @@ class Connection(object):
 
         if run_as is not None:
             params['runAs'] = run_as
+        for p in params:
+            if isinstance(params[p], unicode):
+                params[p] = params[p].encode('utf-8')
 
         response, content = self._req('POST', '/issue/' + issueId + "/execute?" +
                                               urllib.urlencode(params), body='')
@@ -867,6 +920,8 @@ class Connection(object):
         xml += '<duration>%s</duration>' % work_item.duration
         if hasattr(work_item, 'description') and work_item.description is not None:
             xml += '<description>%s</description>' % escape(work_item.description)
+        if hasattr(work_item, 'worktype') and work_item.worktype is not None:
+            xml += '<worktype><name>%s</name></worktype>' % work_item.worktype
         xml += '</workItem>'
         if isinstance(xml, unicode):
             xml = xml.encode('utf-8')
@@ -881,6 +936,8 @@ class Connection(object):
             xml += '<duration>%s</duration>' % work_item.duration
             if hasattr(work_item, 'description') and work_item.description is not None:
                 xml += '<description>%s</description>' % escape(work_item.description)
+            if hasattr(work_item, 'worktype') and work_item.worktype is not None:
+                xml += '<worktype><name>%s</name></worktype>' % work_item.worktype
             xml += '<author login=%s></author>' % quoteattr(work_item.authorLogin)
             xml += '</workItem>'
         if isinstance(xml, unicode):

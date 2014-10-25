@@ -163,10 +163,10 @@ class Issue(YouTrackObject):
         return self.youtrack.getUser(self.reporterName)
 
     def hasAssignee(self):
-        return getattr(self, 'assigneeName', None) is not None
+        return getattr(self, 'Assignee', None) is not None
 
     def getAssignee(self):
-        return self.youtrack.getUser(self.assigneeName)
+        return self.youtrack.getUser(self.Assignee)
 
     def getUpdater(self):
         return self.youtrack.getUser(self.updaterName)
@@ -194,6 +194,9 @@ class Issue(YouTrackObject):
             return self.youtrack.getAttachments(self.id)
         else:
             return self.attachments
+
+    def deleteAttachment(self, attachment):
+        return self.youtrack.deleteAttachment(self.id, attachment.id)
 
     def getLinks(self, outwardOnly=False):
         if getattr(self, 'links', None) is None:
@@ -385,6 +388,8 @@ class WorkItem(YouTrackObject):
         for e in xml.childNodes:
             if e.tagName == 'author':
                 self.authorLogin = e.getAttribute('login')
+            elif e.tagName.lower() == 'worktype':
+                self['worktype'] = self._text(e.getElementsByTagName('name')[0])
             else:
                 self[e.tagName] = self._text(e)
     
