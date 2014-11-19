@@ -13,10 +13,14 @@ from xml.sax.saxutils import escape, quoteattr
 import json
 import tempfile
 import functools
+from poster.encode import multipart_encode
+from poster.streaminghttp import register_openers
+import logging
 
 import httplib2
 import youtrack
 
+log = logging.getLogger("youtrack")
 
 def urlquote(s):
     return urllib.quote(utf8encode(s), safe="")
@@ -139,12 +143,11 @@ class Connection(object):
             params['permittedGroup'] = permittedGroup
 
         encoded_params = {}
-        return self._req('PUT', '/issue', urllib.urlencode(params), content_type='application/x-www-form-urlencoded')
 
         for k, v in params.iteritems():
             encoded_params[k] = unicode(v).encode('utf-8')
 
-        return self._reqXml('PUT', '/issue?' + urllib.urlencode(encoded_params), '')
+        return self._req('PUT', '/issue', urllib.urlencode(encoded_params), content_type='application/x-www-form-urlencoded')
 
     def getIssueCountBulk(self, queries):
         xml = '<queries>\n'
@@ -243,21 +246,22 @@ class Connection(object):
 
     def _process_attachmnets(self, authorLogin, content, contentLength, contentType, created, group, issueId, name,
                              url_prefix='/issue/'):
-        if contentType is not None:
-            content.contentType = contentType
-        if contentLength is not None:
-            content.contentLength = contentLength
-        else:
-            tmp = tempfile.NamedTemporaryFile()
-            tmp.write(content.read())
-            tmp.flush()
-            tmp.seek(0)
-            content = tmp
+        # if contentType is not None:
+        #     content.contentType = contentType
+        # if contentLength is not None:
+        #     content.contentLength = contentLength
+        # else:
+        #     tmp = tempfile.NamedTemporaryFile()
+        #     tmp.write(content.read())
+        #     tmp.flush()
+        #     tmp.seek(0)
+        #     content = tmp
 
         #post_data = {'attachment': content}
+        register_openers()
         post_data = {name: content}
         headers = self.headers.copy()
-        #headers['Content-Type'] = contentType
+        # headers['Content-Type'] = "multipart/form-data"
         # name without extension to workaround: http://youtrack.jetbrains.net/issue/JT-6110
         params = {  #'name': os.path.splitext(name)[0],
                     'authorLogin': authorLogin,
@@ -271,10 +275,14 @@ class Connection(object):
                 params['created'] = self.getIssue(issueId).created
             except youtrack.YouTrackException:
                 params['created'] = str(calendar.timegm(datetime.now().timetuple()) * 1000)
-
         url = self.baseUrl + url_prefix + issueId + "/attachment?" + urllib.urlencode(params)
+        datagen, multi_headers = multipart_encode(post_data)
+
+        for key, value in multi_headers.iteritems():
+            headers[key] = value
+        log.debug(headers)
         r = urllib2.Request(url,
-                            headers=headers, data=post_data)
+                            headers=headers, data=datagen)
         #r.set_proxy('localhost:8888', 'http')
         try:
             res = urllib2.urlopen(r)

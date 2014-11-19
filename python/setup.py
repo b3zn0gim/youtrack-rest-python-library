@@ -14,7 +14,8 @@ setup(
     license='Apache License, Version 2.0',
     install_requires=[
         "httplib2 >= 0.7.4",
-        "urllib2_file"
+        "urllib2_file",
+        "poster",
     ],
     classifiers=[
         "Development Status :: 4 - Beta",
