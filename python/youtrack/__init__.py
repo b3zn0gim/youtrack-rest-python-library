@@ -6,6 +6,7 @@ import re
 from xml.dom import Node
 from xml.dom.minidom import Document
 from xml.dom import minidom
+from xml.sax.saxutils import escape, quoteattr
 
 
 EXISTING_FIELD_TYPES = {
@@ -52,6 +53,7 @@ class YouTrackException(Exception):
 class YouTrackObject(object):
     def __init__(self, xml=None, youtrack=None):
         self.youtrack = youtrack
+        self._attribute_types = dict()
         self._update(xml)
 
     def toXml(self):
@@ -74,9 +76,10 @@ class YouTrackObject(object):
 
     def _updateFromChildren(self, el):
         children = [e for e in el.childNodes if e.nodeType == Node.ELEMENT_NODE]
-        if (children):
+        if children:
             for c in children:
                 name = c.getAttribute('name')
+                value = None
                 if not len(name):
                     continue
                 if isinstance(name, unicode):
@@ -84,12 +87,15 @@ class YouTrackObject(object):
                 values = c.getElementsByTagName('value')
                 if (values is not None) and len(values):
                     if values.length == 1:
-                        setattr(self, name, self._text(values.item(0)))
+                        value = self._text(values.item(0))
                     elif values.length > 1:
-                        setattr(self, name, [self._text(value) for value in values])
+                        value = [self._text(value) for value in values]
                 elif c.hasAttribute('value'):
-                    value = c.getAttribute("value")
+                    value = c.getAttribute('value')
+                if value is not None:
                     setattr(self, name, value)
+                    if c.hasAttribute('xsi:type'):
+                        self._attribute_types[name] = c.getAttribute('xsi:type')
 
     def _text(self, el):
         return "".join([e.data for e in el.childNodes if e.nodeType == Node.TEXT_NODE])
@@ -97,7 +103,7 @@ class YouTrackObject(object):
     def __repr__(self):
         _repr = ''
         for k, v in self.__dict__.items():
-            if k == 'youtrack':
+            if k in ('youtrack', '_attribute_types'):
                 continue
             if isinstance(k, unicode):
                 k = k.encode('utf-8')
@@ -108,9 +114,11 @@ class YouTrackObject(object):
 
     def __iter__(self):
         for item in self.__dict__:
+            if item == '_attribute_types':
+                continue
             attr = self.__dict__[item]
             if isinstance(attr, basestring) or isinstance(attr, list) \
-            or getattr(attr, '__iter__', False):
+                    or getattr(attr, '__iter__', False):
                 yield item
 
     def __getitem__(self, key):
@@ -139,7 +147,10 @@ class Issue(YouTrackObject):
                 self.links = [Link(e, youtrack) for e in xml.getElementsByTagName('issueLink')]
             else:
                 self.links = None
-
+            if len(xml.getElementsByTagName('tag')) > 0:
+                self.tags = [self._text(e) for e in xml.getElementsByTagName('tag')]
+            else:
+                self.tags = None
             if len(xml.getElementsByTagName('attachments')) > 0:
                 self.attachments = [Attachment(e, youtrack) for e in xml.getElementsByTagName('fileUrl')]
             else:
@@ -204,10 +215,24 @@ class Issue(YouTrackObject):
         else:
             return [l for l in self.links if l.source == self.id or not outwardOnly]
 
+    @property
+    def events(self):
+        return self.youtrack.getEvents(self.id)
+
+    @property
+    def custom_fields(self):
+        cf = []
+        for attr_name, attr_type in self._attribute_types.items():
+            if attr_type in ('CustomFieldValue', 'MultiUserField'):
+                cf.append(self[attr_name])
+        return cf
+
 
 class Comment(YouTrackObject):
     def __init__(self, xml=None, youtrack=None):
         YouTrackObject.__init__(self, xml, youtrack)
+        if not hasattr(self, 'text'):
+            self.text = ''
 
     def getAuthor(self):
         return self.youtrack.getUser(self.author)
@@ -485,7 +510,7 @@ class Bundle(YouTrackObject):
             self.values = []
 
     def toXml(self):
-        result = '<%s name="%s">' % (self._bundle_tag_name, self.name.encode('utf-8'))
+        result = '<%s name="%s">' % (self._bundle_tag_name, escape(self.name.encode('utf-8')))
         result += ''.join(v.toXml() for v in self.values)
         result += '</%s>' % self._bundle_tag_name
         return result
@@ -519,8 +544,8 @@ class BundleElement(YouTrackObject):
                 elem = elem.encode('utf-8')
             if isinstance(value, unicode):
                 value = value.encode('utf-8')
-            result += ' %s="%s"' % (elem, str(value))
-        result += ">%s</%s>" % (self.name.encode('utf-8'), self.element_name)
+            result += ' %s="%s"' % (escape(elem), escape(str(value)))
+        result += ">%s</%s>" % (escape(self.name.encode('utf-8')), self.element_name)
         return result
 
     def _update(self, xml):

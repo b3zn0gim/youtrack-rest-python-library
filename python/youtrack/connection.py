@@ -13,10 +13,14 @@ from xml.sax.saxutils import escape, quoteattr
 import json
 import tempfile
 import functools
+from poster.encode import multipart_encode
+from poster.streaminghttp import register_openers
+import logging
 
 import httplib2
 import youtrack
 
+log = logging.getLogger("youtrack")
 
 def urlquote(s):
     return urllib.quote(utf8encode(s), safe="")
@@ -33,7 +37,7 @@ def relogin_on_401(f):
         try:
             return f(self, *args, **kwargs)
         except youtrack.YouTrackException, e:
-            if e.response.status != 401:
+            if e.response.status not in (401, 403):
                 raise e
             self._login(*self._credentials)
             return f(self, *args, **kwargs)
@@ -139,12 +143,11 @@ class Connection(object):
             params['permittedGroup'] = permittedGroup
 
         encoded_params = {}
-        return self._req('PUT', '/issue', urllib.urlencode(params), content_type='application/x-www-form-urlencoded')
 
         for k, v in params.iteritems():
             encoded_params[k] = unicode(v).encode('utf-8')
 
-        return self._reqXml('PUT', '/issue?' + urllib.urlencode(encoded_params), '')
+        return self._req('PUT', '/issue', urllib.urlencode(encoded_params), content_type='application/x-www-form-urlencoded')
 
     def getIssueCountBulk(self, queries):
         xml = '<queries>\n'
@@ -243,21 +246,22 @@ class Connection(object):
 
     def _process_attachmnets(self, authorLogin, content, contentLength, contentType, created, group, issueId, name,
                              url_prefix='/issue/'):
-        if contentType is not None:
-            content.contentType = contentType
-        if contentLength is not None:
-            content.contentLength = contentLength
-        else:
-            tmp = tempfile.NamedTemporaryFile()
-            tmp.write(content.read())
-            tmp.flush()
-            tmp.seek(0)
-            content = tmp
+        # if contentType is not None:
+        #     content.contentType = contentType
+        # if contentLength is not None:
+        #     content.contentLength = contentLength
+        # else:
+        #     tmp = tempfile.NamedTemporaryFile()
+        #     tmp.write(content.read())
+        #     tmp.flush()
+        #     tmp.seek(0)
+        #     content = tmp
 
         #post_data = {'attachment': content}
+        register_openers()
         post_data = {name: content}
         headers = self.headers.copy()
-        #headers['Content-Type'] = contentType
+        # headers['Content-Type'] = "multipart/form-data"
         # name without extension to workaround: http://youtrack.jetbrains.net/issue/JT-6110
         params = {  #'name': os.path.splitext(name)[0],
                     'authorLogin': authorLogin,
@@ -271,10 +275,14 @@ class Connection(object):
                 params['created'] = self.getIssue(issueId).created
             except youtrack.YouTrackException:
                 params['created'] = str(calendar.timegm(datetime.now().timetuple()) * 1000)
-
         url = self.baseUrl + url_prefix + issueId + "/attachment?" + urllib.urlencode(params)
+        datagen, multi_headers = multipart_encode(post_data)
+
+        for key, value in multi_headers.iteritems():
+            headers[key] = value
+        log.debug(headers)
         r = urllib2.Request(url,
-                            headers=headers, data=post_data)
+                            headers=headers, data=datagen)
         #r.set_proxy('localhost:8888', 'http')
         try:
             res = urllib2.urlopen(r)
@@ -317,7 +325,7 @@ class Connection(object):
         self.importUsers([user])
 
     def createUserDetailed(self, login, fullName, email, jabber):
-        print self.importUsers([{'login': login, 'fullName': fullName, 'email': email, 'jabber': jabber}])
+        self.importUsers([{'login': login, 'fullName': fullName, 'email': email, 'jabber': jabber}])
 
     #        return self._put('/admin/user/' + login + '?' +
     #                         'password=' + password +
@@ -788,7 +796,7 @@ class Connection(object):
         xml = minidom.parseString(content)
         return [youtrack.Link(e, self) for e in xml.documentElement.childNodes if e.nodeType == Node.ELEMENT_NODE]
 
-    def executeCommand(self, issueId, command, comment=None, group=None, run_as=None):
+    def executeCommand(self, issueId, command, comment=None, group=None, run_as=None, disable_notifications=False):
         if isinstance(command, unicode):
             command = command.encode('utf-8')
         params = {'command': command}
@@ -801,6 +809,10 @@ class Connection(object):
 
         if run_as is not None:
             params['runAs'] = run_as
+
+        if disable_notifications:
+            params['disableNotifications'] = disable_notifications
+
         for p in params:
             if isinstance(params[p], unicode):
                 params[p] = params[p].encode('utf-8')
@@ -896,10 +908,19 @@ class Connection(object):
         return self.createIssueLinkTypeDetailed(ilt.name, ilt.outwardName, ilt.inwardName, ilt.directed)
 
     def createIssueLinkTypeDetailed(self, name, outwardName, inwardName, directed):
+        if isinstance(name, unicode):
+            name = name.encode('utf-8')
+        if isinstance(outwardName, unicode):
+            outwardName = outwardName.encode('utf-8')
+        if isinstance(inwardName, unicode):
+            inwardName = inwardName.encode('utf-8')
         return self._put('/admin/issueLinkType/' + urlquote(name) + '?' +
                          urllib.urlencode({'outwardName': outwardName,
                                            'inwardName': inwardName,
                                            'directed': directed}))
+
+    def getEvents(self, issue_id):
+        return self._get('/event/issueEvents/' + urlquote(issue_id))
 
     def getWorkItems(self, issue_id):
         try:
