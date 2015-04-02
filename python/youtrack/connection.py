@@ -37,7 +37,7 @@ def relogin_on_401(f):
         try:
             return f(self, *args, **kwargs)
         except youtrack.YouTrackException, e:
-            if e.response.status != 401:
+            if e.response.status not in (401, 403):
                 raise e
             self._login(*self._credentials)
             return f(self, *args, **kwargs)
@@ -325,7 +325,7 @@ class Connection(object):
         self.importUsers([user])
 
     def createUserDetailed(self, login, fullName, email, jabber):
-        print self.importUsers([{'login': login, 'fullName': fullName, 'email': email, 'jabber': jabber}])
+        self.importUsers([{'login': login, 'fullName': fullName, 'email': email, 'jabber': jabber}])
 
     #        return self._put('/admin/user/' + login + '?' +
     #                         'password=' + password +
@@ -796,7 +796,7 @@ class Connection(object):
         xml = minidom.parseString(content)
         return [youtrack.Link(e, self) for e in xml.documentElement.childNodes if e.nodeType == Node.ELEMENT_NODE]
 
-    def executeCommand(self, issueId, command, comment=None, group=None, run_as=None):
+    def executeCommand(self, issueId, command, comment=None, group=None, run_as=None, disable_notifications=False):
         if isinstance(command, unicode):
             command = command.encode('utf-8')
         params = {'command': command}
@@ -809,6 +809,10 @@ class Connection(object):
 
         if run_as is not None:
             params['runAs'] = run_as
+
+        if disable_notifications:
+            params['disableNotifications'] = disable_notifications
+
         for p in params:
             if isinstance(params[p], unicode):
                 params[p] = params[p].encode('utf-8')
@@ -904,10 +908,19 @@ class Connection(object):
         return self.createIssueLinkTypeDetailed(ilt.name, ilt.outwardName, ilt.inwardName, ilt.directed)
 
     def createIssueLinkTypeDetailed(self, name, outwardName, inwardName, directed):
+        if isinstance(name, unicode):
+            name = name.encode('utf-8')
+        if isinstance(outwardName, unicode):
+            outwardName = outwardName.encode('utf-8')
+        if isinstance(inwardName, unicode):
+            inwardName = inwardName.encode('utf-8')
         return self._put('/admin/issueLinkType/' + urlquote(name) + '?' +
                          urllib.urlencode({'outwardName': outwardName,
                                            'inwardName': inwardName,
                                            'directed': directed}))
+
+    def getEvents(self, issue_id):
+        return self._get('/event/issueEvents/' + urlquote(issue_id))
 
     def getWorkItems(self, issue_id):
         try:
