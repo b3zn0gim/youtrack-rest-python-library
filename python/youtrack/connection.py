@@ -19,9 +19,9 @@ import logging
 
 import httplib2
 import youtrack
+import re
 
 log = logging.getLogger("youtrack")
-import re
 
 def urlquote(s):
     return urllib.quote(utf8encode(s), safe="")
