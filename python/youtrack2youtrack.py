@@ -3,7 +3,7 @@
 # migrate project from youtrack to youtrack
 import os
 import sys
-from youtrack.connection import Connection, youtrack
+from youtrack.connection import Connection, youtrack, utf8encode
 import traceback
 
 from sync.users import UserImporter
@@ -37,6 +37,7 @@ Options:
     -n,  Create new issues instead of importing them
     -c,  Add new comments to target issues
     -f,  Sync custom field values
+    -T,  Sync tags (tags will be created on behalf of logged in user)
     -r,  Replace old attachments with new ones (remove and re-import)
     -d,  Disable users caching
     -p,  Covert period values (used as workaroud for JT-19362)
@@ -52,7 +53,7 @@ def main():
     attachments_only = False
     try:
         params = {}
-        opts, args = getopt.getopt(sys.argv[1:], 'hanrcdfpt:')
+        opts, args = getopt.getopt(sys.argv[1:], 'hanrcdfpt:T')
         for opt, val in opts:
             if opt == '-h':
                 usage()
@@ -71,6 +72,8 @@ def main():
                 params['enable_user_caching'] = False
             elif opt == '-n':
                 params['create_new_issues'] = True
+            elif opt == '-T':
+                params['sync_tags'] = True
             elif opt == '-t':
                 if ':' in val:
                     d, h = val.split(':')
@@ -126,16 +129,16 @@ def create_bundle_from_bundle(source, target, bundle_name, bundle_type, user_imp
             for user in users_to_add:
                 try:
                     target.addValueToBundle(target_bundle, user)
-                except YouTrackException, e:
+                except youtrack.YouTrackException, e:
                     if e.response.status != 409:
                         raise e
             return
-        target_value_names = [element.name.encode('utf-8').capitalize() for element in target_bundle.values]
+        target_value_names = [utf8encode(element.name).capitalize() for element in target_bundle.values]
         for value in [elem for elem in source_bundle.values if
-                      elem.name.encode('utf-8').strip().capitalize() not in target_value_names]:
+                      utf8encode(elem.name).strip().capitalize() not in target_value_names]:
             try:
                 target.addValueToBundle(target_bundle, value)
-            except YouTrackException, e:
+            except youtrack.YouTrackException, e:
                 if e.response.status != 409:
                     raise e
     else:
@@ -211,21 +214,15 @@ def period_to_minutes(value):
 
 def create_issues(target, issues, last_issue_number):
     for issue in issues:
-        summary = issue.summary
-        if isinstance(summary, unicode):
-            summary = summary.encode('utf-8')
+        summary = utf8encode(issue.summary)
         description = None
         if hasattr(issue, 'description'):
-            description = issue.description
-            if isinstance(description, unicode):
-                description = description.encode('utf-8')
+            description = utf8encode(issue.description)
         group = None
         if hasattr(issue, 'permittedGroup'):
-            group = issue.permittedGroup
-            if isinstance(group, unicode):
-                group = group.encode('utf-8')
-        # This loop creates and then deletes issues that don't exists in source database.
-        # In other words this loop creates holes in issue numeration.
+            group = utf8encode(issue.permittedGroup)
+        # This loop creates and then deletes issues that don't exist in source
+        # database. In other words this loop creates holes in issue numeration.
         next_number = last_issue_number + 1
         number_gap = int(issue.numberInProject) - last_issue_number - 1
         for i in range(next_number, next_number + number_gap):
@@ -289,11 +286,11 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
         if source_cf.type.lower() == 'period':
             period_cf_names.append(source_cf.name.lower())
 
-        print "Processing custom field '%s'" % cf_name.encode('utf-8')
+        print "Processing custom field '%s'" % utf8encode(cf_name)
         if cf_name in target_cf_names:
             target_cf = target.getCustomField(cf_name)
             if not(target_cf.type == source_cf.type):
-                print "In your target and source YT instances you have field with name [ %s ]" % cf_name.encode('utf-8')
+                print "In your target and source YT instances you have field with name [ %s ]" % utf8encode(cf_name)
                 print "They have different types. Source field type [ %s ]. Target field type [ %s ]" %\
                       (source_cf.type, target_cf.type)
                 print "exiting..."
@@ -366,7 +363,11 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                     print "Collect users for issue [%s]" % issue.id
 
                     users.add(issue.getReporter())
-                    if issue.hasAssignee(): users.add(issue.getAssignee())
+                    if issue.hasAssignee():
+                        if isinstance(issue.Assignee, (list, tuple)):
+                            users.update(issue.getAssignee())
+                        else:
+                            users.add(issue.getAssignee())
                     #TODO: http://youtrack.jetbrains.net/issue/JT-6100
                     users.add(issue.getUpdater())
                     if issue.hasVoters(): users.update(issue.getVoters())
@@ -398,6 +399,19 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                         print e
                         continue
 
+                    if params.get('sync_tags') and issue.tags:
+                        try:
+                            for tag in issue.tags:
+                                tag = re.sub(r'[,&<>]', '_', tag)
+                                try:
+                                    target.executeCommand(issue.id, 'tag ' + tag, disable_notifications=True)
+                                except youtrack.YouTrackException:
+                                    tag = re.sub(r'[\s-]', '_', tag)
+                                    target.executeCommand(issue.id, 'tag ' + tag, disable_notifications=True)
+                        except youtrack.YouTrackException, e:
+                            print "Cannot sync tags for issue " + issue.id
+                            print e
+
                     if params.get('add_new_comments'):
                         target_comments = dict()
                         max_id = 0
@@ -411,7 +425,7 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                                 if hasattr(c, 'permittedGroup'):
                                     group = c.permittedGroup
                                 try:
-                                    target.executeCommand(issue.id, 'comment', c.text, group, c.author)
+                                    target.executeCommand(issue.id, 'comment', c.text, group, c.author, disable_notifications=True)
                                 except youtrack.YouTrackException, e:
                                     print 'Cannot add comment to issue '
                                     print e
@@ -449,10 +463,10 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                                     target_cf_value = set([target_cf_value])
                                 for v in target_cf_value:
                                     if v not in source_cf_value:
-                                        target.executeCommand(issue.id, 'remove %s %s' % (pcf.name, v))
+                                        target.executeCommand(issue.id, 'remove %s %s' % (pcf.name, v), disable_notifications=True)
                                 for v in source_cf_value:
                                     if v not in target_cf_value:
-                                        target.executeCommand(issue.id, 'add %s %s' % (pcf.name, v))
+                                        target.executeCommand(issue.id, 'add %s %s' % (pcf.name, v), disable_notifications=True)
                             else:
                                 if source_cf_value is None:
                                     source_cf_value = target.getProjectCustomField(projectId, pcf.name).emptyText
@@ -465,7 +479,7 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                                     source_cf_value = '%sm' % source_cf_value
                                 command = '%s %s' % (pcf.name, source_cf_value)
                                 try:
-                                    target.executeCommand(issue.id, command)
+                                    target.executeCommand(issue.id, command, disable_notifications=True)
                                 except youtrack.YouTrackException, e:
                                     if e.response.status == 412 and e.response.reason.find('Precondition Failed') > -1:
                                         print 'WARN: Some workflow blocks following command: %s' % command
@@ -517,11 +531,10 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                     users = set([])
                     for a in issue.getAttachments():
                         if a.name + '\n' + a.created in existing_attachments and not params.get('replace_attachments'):
-                            if isinstance(a.name, unicode):
-                                a.name = a.name.encode('utf-8')
+                            a.name = utf8encode(a.name)
                             try:
                                 print "Skip attachment '%s' (created: %s) because it's already exists" \
-                                      % (a.name, a.created)
+                                      % (utf8encode(a.name), utf8encode(a.created))
                             except Exception:
                                 pass
                             continue
@@ -532,13 +545,13 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                     user_importer.importUsersRecursively(users)
 
                     for a in attachments:
-                        print "Transfer attachment of " + issue.id.encode('utf-8') + ": " + a.name.encode('utf-8')
+                        print "Transfer attachment of " + utf8encode(issue.id) + ": " + utf8encode(a.name)
                         # TODO: add authorLogin to workaround http://youtrack.jetbrains.net/issue/JT-6082
                         #a.authorLogin = target_login
                         try:
                             target.createAttachmentFromAttachment(issue.id, a)
                         except BaseException, e:
-                            print("Cant import attachment [ %s ]" % a.name.encode('utf-8'))
+                            print "Cant import attachment [ %s ]" % utf8encode(a.name)
                             print repr(e)
                             continue
                         if params.get('replace_attachments'):
@@ -548,7 +561,7 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
                                     print 'Deleting old attachment'
                                     target.deleteAttachment(issue.id, old_attachment.id)
                             except BaseException, e:
-                                print "Cannot delete attachment '%s' from issue %s" % (a.name.encode('utf-8'), issue.id)
+                                print "Cannot delete attachment '%s' from issue %s" % (utf8encode(a.name), utf8encode(issue.id))
                                 print e
 
             except Exception, e:
@@ -565,7 +578,7 @@ def youtrack2youtrack(source_url, source_login, source_password, target_url, tar
     for issue_id, command in failed_commands:
         try:
             print 'Executing command on issue %s: %s' % (issue_id, command)
-            target.executeCommand(issue_id, command)
+            target.executeCommand(issue_id, command, disable_notifications=True)
         except youtrack.YouTrackException, e:
             print 'Failed to execute command for issue #%s: %s' % (issue_id, command)
             print e
@@ -609,7 +622,7 @@ def import_attachments_only(source_url, source_login, source_password,
                     for a in issue.getAttachments():
                         if a.name + '\n' + a.created in existing_attachments and not params.get('replace_attachments'):
                             print "Skip attachment '%s' (created: %s) because it's already exists" \
-                                  % (a.name.encode('utf-8'), a.created)
+                                  % (utf8encode(a.name), utf8encode(a.created))
                             continue
                         attachments.append(a)
                         author = a.getAuthor()
@@ -618,11 +631,11 @@ def import_attachments_only(source_url, source_login, source_password,
                     user_importer.importUsersRecursively(users)
 
                     for a in attachments:
-                        print 'Transfer attachment of %s: %s' % (issue.id, a.name.encode('utf-8'))
+                        print 'Transfer attachment of %s: %s' % (utf8encode(issue.id), utf8encode(a.name))
                         try:
                             target.createAttachmentFromAttachment(issue.id, a)
                         except BaseException, e:
-                            print 'Cannot import attachment [ %s ]' % a.name.encode('utf-8')
+                            print 'Cannot import attachment [ %s ]' % utf8encode(a.name)
                             print repr(e)
                             continue
                         if params.get('replace_attachments'):
@@ -632,7 +645,7 @@ def import_attachments_only(source_url, source_login, source_password,
                                     print 'Deleting old attachment'
                                     target.deleteAttachment(issue.id, old_attachment.id)
                             except BaseException, e:
-                                print "Cannot delete attachment '%s' from issue %s" % (a.name.encode('utf-8'), issue.id)
+                                print "Cannot delete attachment '%s' from issue %s" % (utf8encode(a.name), utf8encode(issue.id))
                                 print e
             except Exception, e:
                 print 'Cannot process issues from %d to %d' % (start, start + max)
