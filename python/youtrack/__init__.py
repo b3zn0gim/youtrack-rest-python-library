@@ -177,6 +177,8 @@ class Issue(YouTrackObject):
         return getattr(self, 'Assignee', None) is not None
 
     def getAssignee(self):
+        if isinstance(self.Assignee, (list, tuple)):
+            return [self.youtrack.getUser(u) for u in self.Assignee]
         return self.youtrack.getUser(self.Assignee)
 
     def getUpdater(self):
@@ -544,7 +546,7 @@ class BundleElement(YouTrackObject):
                 elem = elem.encode('utf-8')
             if isinstance(value, unicode):
                 value = value.encode('utf-8')
-            result += ' %s="%s"' % (escape(elem), escape(str(value)))
+            result += ' %s=%s' % (escape(elem), quoteattr(str(value)))
         result += ">%s</%s>" % (escape(self.name.encode('utf-8')), self.element_name)
         return result
 

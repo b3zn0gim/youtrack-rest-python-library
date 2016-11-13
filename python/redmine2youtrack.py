@@ -12,6 +12,7 @@ import youtrack
 import youtrack.connection
 from youtrack.importHelper import create_bundle_safe
 from datetime import datetime
+from dateutil import parser
 
 
 sys.stdout = os.fdopen(sys.stdout.fileno(), 'w', 0)
@@ -90,8 +91,7 @@ def to_unixtime(time_string):
                 tz_diff = int(tzm[2]) * 60 + int(tzm[3])
                 if tzm[1] == '-':
                     tz_diff = -tz_diff
-        dt = datetime.strptime(
-            time_string.replace('T', ' '), '%Y-%m-%d %H:%M:%S')
+        dt = parser.parse(time_string)
     return (calendar.timegm(dt.timetuple()) + tz_diff) * 1000
 
 
@@ -200,8 +200,12 @@ class RedmineImporter(object):
             except AttributeError:
                 pass
             try:
+                # In some cases redmine user login can be empty or missing.
+                # So, both cases should be handled.
                 user.login = redmine_user.login
             except AttributeError:
+                pass
+            if not hasattr(user, 'login') or not user.login:
                 if hasattr(user, 'email'):
                     user.login = user.email
                 else:
@@ -211,7 +215,14 @@ class RedmineImporter(object):
             #user.login = redmine_user.login or 'guest'
             #user.email = redmine_user.mail or 'example@example.com'
             if user.login != 'guest':
-                user.fullName = redmine_user.firstname + ' ' + redmine_user.lastname
+                if redmine_user.firstname is None and redmine_user.lastname is None:
+                    user.fullName = user.login
+                elif redmine_user.firstname is None:
+                    user.fullName = redmine_user.lastname
+                elif redmine_user.lastname is None:
+                    user.fullName = redmine_user.firstname
+                else:
+                    user.fullName = redmine_user.firstname + ' ' + redmine_user.lastname
             else:
                 user.created = True
             if hasattr(redmine_user, 'groups'):
@@ -553,6 +564,8 @@ class RedmineImporter(object):
             return
         for attach in issue.attachments:
             attach.author.login = self._create_user(attach.author).login
+            if not attach.author.login:
+                attach.author.login = 'guest'
             self._target.createAttachmentFromAttachment(
                 self._get_yt_issue_id(issue),
                 RedmineAttachment(attach, self._source))
@@ -566,6 +579,9 @@ class RedmineImporter(object):
         }
         if hasattr(issue, 'relations'):
             for rel in issue.relations:
+                if rel.relation_type not in link_types:
+                    print 'Unsuitable link type: %s. Skipped' % rel.relation_type
+                    continue
                 from_id = rel.issue_id
                 to_id = rel.issue_to_id
                 if rel.relation_type == 'duplicates':

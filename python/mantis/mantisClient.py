@@ -5,7 +5,8 @@ import mantis
 
 
 class MantisClient(object):
-    def __init__(self, host, port, login, password, db_name, charset_name):
+    def __init__(self, host, port, login, password, db_name, charset_name, batch_subprojects):
+        self.batch_subprojects = batch_subprojects
         self.sql_cnx = MySQLdb.connect(host=host, port=port, user=login, passwd=password,
             db=db_name, cursorclass=MySQLdb.cursors.DictCursor, charset=charset_name)
 
@@ -17,7 +18,7 @@ class MantisClient(object):
         request = "SELECT %s, %s FROM mantis_project_table" % (id_row, name_row,)
         cursor.execute(request)
         for row in cursor:
-            if row[name_row].encode('utf8') == project_name:
+            if row[name_row].encode('utf8').strip() == project_name:
                 return row[id_row]
 
     def _to_user(self, row):
@@ -190,7 +191,7 @@ class MantisClient(object):
     def get_issue_links(self, after, max):
         cursor = self.sql_cnx.cursor()
         result = []
-        cursor.execute("SELECT * FROM mantis_bug_relationship_table LIMIT %d OFFSET %d" % (after, max))
+        cursor.execute("SELECT * FROM mantis_bug_relationship_table LIMIT %d OFFSET %d" % (max, after))
         for row in cursor:
             source_bug_id = row["source_bug_id"]
             target_bug_id = row["destination_bug_id"]
@@ -244,8 +245,9 @@ class MantisClient(object):
         return None
 
     def _calculate_project_ids(self, project_id):
-        result = self._get_child_projects_by_project_id(project_id)
-        result.append(int(project_id))
+        result = [int(project_id)]
+        if self.batch_subprojects:
+            result.extend(self._get_child_projects_by_project_id(project_id))
         # TODO: Why do we add projectid=0? Invesigate it!
         #result.append(int(0))
         return result

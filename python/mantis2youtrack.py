@@ -16,7 +16,7 @@ def main():
                                                                                                             1:9]
 
     mantis.FIELD_TYPES.update(youtrack.EXISTING_FIELD_TYPES)
-    mantis_product_names = sys.argv[9:]
+    mantis_product_names = [p.strip() for p in sys.argv[9:]]
     mantis2youtrack(target_url, target_login, target_pass, mantis_db, mantis_host,
         mantis_port, mantis_login, mantis_pass, mantis_product_names)
 
@@ -225,7 +225,7 @@ def process_mantis_custom_field(connection, mantis_cf_def):
     yt_cf_type = mantis.CF_TYPES[mantis_cf_def.type]
     yt_name = mantis.FIELD_NAMES[mantis_cf_def.name] if mantis_cf_def.name in mantis.FIELD_NAMES else mantis_cf_def.name
     if yt_name in mantis.FIELD_TYPES:
-        yt_cf_type = mantis.FIELD_NAMES[yt_name]
+        yt_cf_type = mantis.FIELD_TYPES[yt_name]
     create_custom_field(connection, yt_cf_type, yt_name, False)
 
 
@@ -342,7 +342,7 @@ def mantis2youtrack(target_url, target_login, target_pass, mantis_db_name, manti
     target = Connection(target_url, target_login, target_pass)
     #connacting to mantis
     client = MantisClient(mantis_db_host, int(mantis_db_port), mantis_db_login,
-        mantis_db_pass, mantis_db_name, mantis.CHARSET)
+        mantis_db_pass, mantis_db_name, mantis.CHARSET, mantis.BATCH_SUBPROJECTS)
     if not len(mantis_project_names):
         print "You should declarer at least one project to import"
         sys.exit()
@@ -367,7 +367,10 @@ def mantis2youtrack(target_url, target_login, target_pass, mantis_db_name, manti
     # adding some custom fields that are predefined in mantis
     project_ids = []
     for name in mantis_project_names:
-        project_ids.append(client.get_project_id_by_name(name))
+        pid = client.get_project_id_by_name(name)
+        if pid is None:
+            raise Exception("Cannot find project with name '%s'" % name)
+        project_ids.append(pid)
 
     custom_fields = client.get_mantis_custom_fields(project_ids)
 

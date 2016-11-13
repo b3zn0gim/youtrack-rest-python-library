@@ -21,6 +21,7 @@ import httplib2
 import youtrack
 
 log = logging.getLogger("youtrack")
+import re
 
 def urlquote(s):
     return urllib.quote(utf8encode(s), safe="")
@@ -34,13 +35,19 @@ def utf8encode(source):
 def relogin_on_401(f):
     @functools.wraps(f)
     def wrapped(self, *args, **kwargs):
-        try:
-            return f(self, *args, **kwargs)
-        except youtrack.YouTrackException, e:
-            if e.response.status not in (401, 403):
-                raise e
-            self._login(*self._credentials)
-            return f(self, *args, **kwargs)
+        attempts = 10
+        while attempts:
+            try:
+                return f(self, *args, **kwargs)
+            except youtrack.YouTrackException, e:
+                if e.response.status not in (401, 403, 500, 504):
+                    raise e
+                if e.response.status == 504:
+                    time.sleep(30)
+                else:
+                    self._login(*self._credentials)
+                attempts -= 1
+        return f(self, *args, **kwargs)
     return wrapped
 
 
@@ -83,6 +90,13 @@ class Connection(object):
 
         response, content = self.http.request((self.baseUrl + url).encode('utf-8'), method, headers=headers, body=body)
         content = content.translate(None, '\0')
+        _illegal_unichrs = [(0x00, 0x08), (0x0B, 0x0C), (0x0E, 0x1F),
+                            (0x7F, 0x84), (0x86, 0x9F), (0xFDD0, 0xFDDF),
+                            (0xFFFE, 0xFFFF)]
+        _illegal_ranges = ["%s-%s" % (unichr(low), unichr(high))
+                           for (low, high) in _illegal_unichrs]
+        _illegal_xml_chars_re = re.compile(u'[%s]' % u''.join(_illegal_ranges))
+        content = re.sub(_illegal_xml_chars_re, '', content.decode('utf-8')).encode('utf-8')
         if response.status != 200 and response.status != 201 and (ignoreStatus != response.status):
             raise youtrack.YouTrackException(url, response, content)
 
@@ -92,7 +106,7 @@ class Connection(object):
         response, content = self._req(method, url, body, ignoreStatus)
         if response.has_key('content-type'):
             if (response["content-type"].find('application/xml') != -1 or response["content-type"].find(
-                    'text/xml') != -1) and content is not None and content != '':
+                'text/xml') != -1) and content is not None and content != '':
                 try:
                     return minidom.parseString(content)
                 except Exception:
@@ -207,11 +221,20 @@ class Connection(object):
             contentLength = None
             if 'content-length' in content.headers.dict:
                 contentLength = int(content.headers.dict['content-length'])
+            print 'Importing attachment for issue ', issueId
+            try:
+                print 'Name: ', utf8encode(a.name)
+            except Exception, e:
+                print e
+            try:
+                print 'Author: ', a.authorLogin
+            except Exception, e:
+                print e
             return self.importAttachment(issueId, a.name, content, a.authorLogin,
-                                         contentLength=contentLength,
-                                         contentType=content.info().type,
-                                         created=a.created if hasattr(a, 'created') else None,
-                                         group=a.group if hasattr(a, 'group') else '')
+                contentLength=contentLength,
+                contentType=content.info().type,
+                created=a.created if hasattr(a, 'created') else None,
+                group=utf8encode(a.group) if hasattr(a, 'group') else '')
         except urllib2.HTTPError, e:
             print "Can't create attachment"
             try:
@@ -246,16 +269,16 @@ class Connection(object):
 
     def _process_attachmnets(self, authorLogin, content, contentLength, contentType, created, group, issueId, name,
                              url_prefix='/issue/'):
-        # if contentType is not None:
-        #     content.contentType = contentType
-        # if contentLength is not None:
-        #     content.contentLength = contentLength
-        # else:
-        #     tmp = tempfile.NamedTemporaryFile()
-        #     tmp.write(content.read())
-        #     tmp.flush()
-        #     tmp.seek(0)
-        #     content = tmp
+        if contentType is not None:
+            content.contentType = contentType
+        if contentLength is not None:
+            content.contentLength = contentLength
+        elif not isinstance(content, file):
+            tmp = tempfile.NamedTemporaryFile(mode='w+b')
+            tmp.write(content.read())
+            tmp.flush()
+            tmp.seek(0)
+            content = tmp
 
         #post_data = {'attachment': content}
         register_openers()
@@ -263,8 +286,8 @@ class Connection(object):
         headers = self.headers.copy()
         # headers['Content-Type'] = "multipart/form-data"
         # name without extension to workaround: http://youtrack.jetbrains.net/issue/JT-6110
-        params = {  #'name': os.path.splitext(name)[0],
-                    'authorLogin': authorLogin,
+        params = {#'name': os.path.splitext(name)[0],
+                  'authorLogin': authorLogin.encode('utf-8'),
         }
         if group is not None:
             params["group"] = group
@@ -387,7 +410,7 @@ class Connection(object):
         bad_fields = ['id', 'projectShortName', 'votes', 'commentsCount',
                       'historyUpdated', 'updatedByFullName', 'updaterFullName',
                       'reporterFullName', 'links', 'attachments', 'jiraId',
-                      'entityId']
+                      'entityId', 'tags', 'sprint']
 
         tt_settings = self.getProjectTimeTrackingSettings(projectId)
         if tt_settings and tt_settings.Enabled and tt_settings.TimeSpentField:
@@ -995,7 +1018,7 @@ class Connection(object):
     def getGlobalTimeTrackingSettings(self):
         try:
             cont = self._get('/admin/timetracking')
-            return youtrack.GlobalTimeTrackingSettings(cont, xml)
+            return youtrack.GlobalTimeTrackingSettings(cont, self)
         except youtrack.YouTrackException, e:
             if e.response.status != 404:
                 raise e
@@ -1097,7 +1120,7 @@ class Connection(object):
             elif isinstance(value, youtrack.Group):
                 request += "group/%s/" % urlquote(value.name.encode('utf-8'))
             else:
-                request += "individual/%s/" % value
+                request += "individual/%s/" % urlquote(value)
         return self._put(request)
 
     def removeValueFromBundle(self, bundle, value):
