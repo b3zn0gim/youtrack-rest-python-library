@@ -87,6 +87,9 @@ class Connection(object):
                 content_type = 'application/xml; charset=UTF-8'
             headers['Content-Type'] = content_type
             headers['Content-Length'] = str(len(body)) if body else '0'
+        elif method == 'GET':
+            headers = headers.copy()
+            headers['Accept'] = 'application/xml'
 
         response, content = self.http.request((self.baseUrl + url).encode('utf-8'), method, headers=headers, body=body)
         content = content.translate(None, '\0')
